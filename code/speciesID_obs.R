@@ -169,7 +169,8 @@ n_obs_total <- length(y_long)
 data <- list(
   y_long = y_long,           
   seal_idx = seal_idx, 
-  #obs_idx = obs_idx,         
+  obs_idx = obs_idx,
+  n = num_obs,
   n_obs_total = n_obs_total,
   R = R, 
   nspec = nspec, 
@@ -178,74 +179,81 @@ data <- list(
   nacert = nacert, 
   dirchprior = rep(1, nage * nspec)
 )
+
 inits <- init.values()
 params <- c('psi','alpha','beta','delta','gamma')
-mod <- jags.model('code/speciesID.jag',data,inits,n.chains=nchains,n.adapt=ada)
+mod <- jags.model('code/speciesID_obs.jag',data,inits,n.chains=nchains,n.adapt=ada)
 gc()
 single.sim <- coda.samples(mod,params,n.iter=iter)
 
-save.image("speciesID.RData")
+save.image("speciesID_obs.RData")
 
 # --- Process Results ---
 psi=single.sim[,(paste("psi[",seq(1:(nspec*nage)),"]",sep=""))]
 psi=as.matrix(psi)[seq(1,iter*nchains,thn),]
 
-alpha=single.sim[,(paste0("alpha[",rep(seq(1:nspec),each=nspec),",",seq(1:nspec),"]"))]
+alpha=single.sim[,(paste0("alpha[",rep(seq(1:num_obs),each=nspec*nspec),",",rep(seq(1:nspec),each=nspec),",",seq(1:nspec),"]"))]
 alpha=as.matrix(alpha)[seq(1,iter*nchains,thn),]
-beta=single.sim[,(paste0("beta[",rep(seq(1:nspec),each=nspec*nscert),",",rep(seq(1:nspec),each=nscert),",",seq(1:nscert),"]"))]
+
+beta=single.sim[,(paste0("beta[",rep(seq(1:num_obs),each=nspec*nspec*nscert),",",rep(seq(1:nspec),each=nspec*nscert),",",rep(seq(1:nspec),each=nscert),",",seq(1:nscert),"]"))]
 beta=as.matrix(beta)[seq(1,iter*nchains,thn),]
-delta=single.sim[,(paste0("delta[",rep(seq(1:nage),each=nage),",",seq(1:nage),"]"))]
+
+delta=single.sim[,(paste0("delta[",rep(seq(1:num_obs),each=nage*nage),",",rep(seq(1:nage),each=nage),",",seq(1:nage),"]"))]
 delta=as.matrix(delta)[seq(1,iter*nchains,thn),]
-gamma=single.sim[,(paste0("gamma[",rep(seq(1:nage),each=nage*nacert),",",rep(seq(1:nage),each=nacert),",",seq(1:nacert),"]"))]
+
+gamma=single.sim[,(paste0("gamma[",rep(seq(1:num_obs),each=nage*nage*nacert),",",rep(seq(1:nage),each=nage*nacert),",",rep(seq(1:nage),each=nacert),",",seq(1:nacert),"]"))]
 gamma=as.matrix(gamma)[seq(1,iter*nchains,thn),]
 
 rm(single.sim)
 gc()
-p=array(0,dim=c(nspec*nage,spcats*nspec,nrow(psi)))
+
+p=array(0,dim=c(nspec*nage,spcats*nspec,num_obs,nrow(psi)))
 gc()
 
-for(l in 1:nspec)  { # true species 
-  for(j in 1:nage){ # true age class    
-    for(s in 1:nspec){ # observed species
-      for(c_s in 1:nscert){ # species confidence
-        for(a in 1:nage){  # observed age
-          for(c_a in 1:nacert){  # age confidence
-            p[(l-1)*nage+j,spcats*(s-1)+nage*nacert*(c_s-1)+nacert*(a-1)+c_a,] <- alpha[,paste0("alpha[",l,",",s,"]")]*beta[,paste0("beta[",l,",",s,",",c_s,"]")]*delta[,paste0("delta[",j,",",a,"]")]*gamma[,paste0("gamma[",j,",",a,",",c_a,"]")]
-            gc()
+for(i in 1:num_obs){
+  for(l in 1:nspec)  { # true species 
+    for(j in 1:nage){ # true age class    
+      for(s in 1:nspec){ # observed species
+        for(c_s in 1:nscert){ # species confidence
+          for(a in 1:nage){  # observed age
+            for(c_a in 1:nacert){  # age confidence
+              p[(l-1)*nage+j,spcats*(s-1)+nage*nacert*(c_s-1)+nacert*(a-1)+c_a,i,] <- alpha[,paste0("alpha[",i,",",l,",",s,"]")]*beta[,paste0("beta[",i,",",l,",",s,",",c_s,"]")]*delta[,paste0("delta[",i,",",j,",",a,"]")]*gamma[,paste0("gamma[",i,",",j,",",a,",",c_a,"]")]
+              gc()
+            }
           }
         }
       }
-    }
-  }    
+    }    
+  }
 }
 
-meanp=apply(p,c(1,2),mean)
+meanp=apply(p,c(1,2,3),mean)
 rownames(meanp) <- paste(rep(names(spclass),each=nage),names(ageclass))
 colnames(meanp) <- paste(rep(paste(rep(toupper(spclass),each=nscert),names(scertclass)),each=nage*nacert),rep(names(ageclass),times=rep(nacert,nage)),rep(names(acertclass),nspec))
-tiff(file="meanp.tiff",width=7.25,height=5,units="in",res=600,compression="lzw")
 
-par(mfrow=c(1,1),mar=c(2, 1, 0.5, 1))
+tiff(file="meanp_obs.tiff",width=12,height=6,units="in",res=600,compression="lzw")
+
+par(mfrow=c(2,4),mar=c(2, 1, 0.5, 1)) # Updated to 2x4 grid to fit up to 8 observers
 par(oma = c (3, 3, 0, 5))
-cols = c(
+
+# Corrected for 4 species: 12 base palettes repeated appropriately
+cols <- c(
   rep(
-    c(
-      # Palette 1 (e.g., Spotted)
-      colorRampPalette(c("white", "red"))(100)[seq(30, 100, length = nscert)],
-      # Palette 2 (e.g., Ribbon)
+    c(colorRampPalette(c("white", "red"))(100)[seq(30, 100, length = nscert)],
       colorRampPalette(c("white", "green"))(100)[seq(30, 100, length = nscert)],
-      # Palette 3 (e.g., Bearded)
       colorRampPalette(c("white", "yellow"))(100)[seq(30, 100, length = nscert)],
-      # Palette 4 (e.g., Ringed)
-      colorRampPalette(c("white", "blue"))(100)[seq(30, 100, length = nscert)]
-    ), 
+      colorRampPalette(c("white", "blue"))(100)[seq(30, 100, length = nscert)]), 
     times = rep(nage * nacert, nspec * nscert)
   )
 )
+
 dens=seq(15,35,length=nacert)
 angs=rep(unique(c(45,360-45,seq(45,360-45,length=nage))),each=nacert)
 
-barplot(t(as.matrix(meanp)),names.arg=paste0(rep(toupper(spclass),each=nage),toupper(substr(names(ageclass),1,1))),xlab=NA,ylab=NA,cex.lab=0.6,cex.axis=0.6,cex.names=0.6,legend.text=F,col =cols)
-barplot(t(as.matrix(meanp)),add=T,col=1,density=dens,angle=angs,names.arg=paste0(rep(toupper(spclass),each=nage),toupper(substr(names(ageclass),1,1))),xlab=NA,ylab=NA,cex.lab=0.6,cex.axis=0.6,cex.names=0.6,legend.text=F)
+for(i in 1:num_obs){
+  barplot(t(as.matrix(meanp[,,i])),names.arg=paste0(rep(toupper(spclass),each=nage),toupper(substr(names(ageclass),1,1))),xlab=NA,ylab=NA,cex.lab=0.6,cex.axis=0.6,cex.names=0.6,legend.text=F,col =cols)
+  barplot(t(as.matrix(meanp[,,i])),add=T,col=1,density=dens,angle=angs,names.arg=paste0(rep(toupper(spclass),each=nage),toupper(substr(names(ageclass),1,1))),xlab=NA,ylab=NA,cex.lab=0.6,cex.axis=0.6,cex.names=0.6,legend.text=F)
+}
 
 mtext("True species/age", side = 1, outer = T, line=2)
 mtext("Probability of observed species/age and confidence", side = 2, outer = T, line=2)
@@ -254,73 +262,81 @@ plot(0, 0, type = "n", bty = "n", xaxt = "n", yaxt = "n")
 legend("right",c(paste(tolower(names(spclass)),"seal"),names(ageclass)), xpd = TRUE, horiz = F, inset = c(0,0), bty = "n", angle=c(rep(45,nspec),unique(c(45,360-45,seq(45,360-45,length=nage)))),density=c(rep(-1,nspec),rep(40,nage)),x = "right", fill=c(cols[seq(nage*nacert,spcats*nspec,spcats)],rep(1,nage)),cex=.75)
 dev.off()
 
-p12=array(0,dim=c(nspec,nspec*nscert,length(seq(1,iter*nchains,thn))))
+p12=array(0,dim=c(nspec,nspec*nscert,num_obs,length(seq(1,iter*nchains,thn))))
 
-for(l in 1:nspec){
-  for(s in 1:nspec){
-    for(c_s in 1:nscert){ 
-      p12[l,(s-1)*nscert+c_s,]=alpha[,paste0("alpha[",l,",",s,"]")]*beta[,paste0("beta[",l,",",s,",",c_s,"]")]
-    }
-  }
-}
-
-dimnames(p12)=list(toupper(spclass),paste0(rep(toupper(spclass),each=nscert),names(scertclass)))
-save(p12,file="p12.RData")
-
-pspecage=array(0,dim=c(nspec*nage,nspec*nage,length(seq(1,iter*nchains,thn))))
-
-for(l in 1:nspec){
-  tempa=alpha[,rep(paste0("alpha[",1:nspec,",",l,"]"),each=nage)]
-  for(k in 1:nage){
-    tempb=delta[,rep(paste0("delta[",1:nage,",",k,"]"),nage)]
+for(i in 1:num_obs){
+  for(l in 1:nspec){
     for(s in 1:nspec){
-      for(j in 1:nage){
-        pspecage[(s-1)*nage+j,(l-1)*nage+k,] = tempa[,(s-1)*nage+j]*tempb[,j]
+      for(c_s in 1:nscert){ 
+        p12[l,(s-1)*nscert+c_s,i,]=alpha[,paste0("alpha[",i,",",l,",",s,"]")]*beta[,paste0("beta[",i,",",l,",",s,",",c_s,"]")]
       }
     }
   }
 }
 
-p12mean=apply(p12,c(1,2),mean)
+dimnames(p12)=list(toupper(spclass),paste0(rep(toupper(spclass),each=nscert),names(scertclass)),paste0("obs",1:num_obs))
+save(p12,file="p12_obs.RData")
+
+pspecage=array(0,dim=c(nspec*nage,nspec*nage,num_obs,length(seq(1,iter*nchains,thn))))
+for(i in 1:num_obs){
+  for(l in 1:nspec){
+    tempa=alpha[,rep(paste0("alpha[",i,",",1:nspec,",",l,"]"),each=nage)]
+    for(k in 1:nage){
+      tempb=delta[,rep(paste0("delta[",i,",",1:nage,",",k,"]"),nage)]
+      for(s in 1:nspec){
+        for(j in 1:nage){
+          pspecage[(s-1)*nage+j,(l-1)*nage+k,i,] = tempa[,(s-1)*nage+j]*tempb[,j]
+        }
+      }
+    }
+  }
+}
+
+p12mean=apply(p12,c(1,2,3),mean)
 tquantiles=function(x){quantile(x,c(.025))}
-p12LCI=apply(p12,c(1,2),tquantiles)
+p12LCI=apply(p12,c(1,2,3),tquantiles)
 tquantiles=function(x){quantile(x,c(.975))}
-p12UCI=apply(p12,c(1,2),tquantiles)
+p12UCI=apply(p12,c(1,2,3),tquantiles)
 
-p12summary=matrix(0,nspec*nscert*nspec,3)
-
-p12summary[,1]=c(t(p12mean))
-p12summary[,2]=c(t(p12LCI))
-p12summary[,3]=c(t(p12UCI))
+p12summary=array(0,dim=c(nspec*nscert*nspec,3,num_obs))
+for(i in 1:num_obs){
+  p12summary[,1,i]=c(t(p12mean[,,i]))
+  p12summary[,2,i]=c(t(p12LCI[,,i]))
+  p12summary[,3,i]=c(t(p12UCI[,,i]))
+}
 rownames(p12summary) <- paste0(rep(paste0("true",toupper(spclass),":"),each=nspec*nscert),paste0(rep(toupper(spclass),each=nscert),names(scertclass)))
 colnames(p12summary) <- c("p","lci","uci")
 
-pspecagemean=apply(pspecage,c(1,2),mean)
+pspecagemean=apply(pspecage,c(1,2,3),mean)
 tquantiles=function(x){quantile(x,c(.025))}
-pspecageLCI=apply(pspecage,c(1,2),tquantiles)
+pspecageLCI=apply(pspecage,c(1,2,3),tquantiles)
 tquantiles=function(x){quantile(x,c(.975))}
-pspecageUCI=apply(pspecage,c(1,2),tquantiles)
+pspecageUCI=apply(pspecage,c(1,2,3),tquantiles)
 
-pspecagesummary=matrix(0,nspec*nage*nspec*nage,3)
-
-pspecagesummary[,1]=c(t(pspecagemean))
-pspecagesummary[,2]=c(t(pspecageLCI))
-pspecagesummary[,3]=c(t(pspecageUCI))
+pspecagesummary=array(0,dim=c(nspec*nage*nspec*nage,3,num_obs))
+for(i in 1:num_obs){
+  pspecagesummary[,1,i]=c(t(pspecagemean[,,i]))
+  pspecagesummary[,2,i]=c(t(pspecageLCI[,,i]))
+  pspecagesummary[,3,i]=c(t(pspecageUCI[,,i]))
+}
 
 rownames(pspecagemean) <- paste(rep(names(spclass),each=nage),names(ageclass))
 colnames(pspecagemean) <- paste(rep(names(spclass),each=nage),names(ageclass))
 
-tiff(file="pspecagemean.tiff",width=7.25,height=5,units="in",res=600,compression="lzw")
-par(mfrow=c(1,1),mar=c(2, 1, 0.5, 1))
+tiff(file="pspecagemean_obs.tiff",width=12,height=6,units="in",res=600,compression="lzw")
+par(mfrow=c(2,4),mar=c(2, 1, 0.5, 1))
 par(oma = c (3, 3, 0, 5))
-cols = c(colorRampPalette(c("white", "red"))(100)[rep(50,nage)],
-         colorRampPalette(c("white", "green"))(100)[rep(50,nage)],
-         colorRampPalette(c("white", "yellow"))(100)[rep(50,nage)],
-         colorRampPalette(c("white", "blue"))(100)[rep(50,nage)]
-         )
 
-barplot(t(as.matrix(pspecagemean)),names.arg=paste0(rep(toupper(spclass),each=nage),toupper(substr(names(ageclass),1,1))),xlab=NA,ylab=NA,cex.lab=.75,cex.axis=0.55,cex.names=0.55,legend.text=F,col = cols)
-barplot(t(as.matrix(pspecagemean)),names.arg=paste0(rep(toupper(spclass),each=nage),toupper(substr(names(ageclass),1,1))),xlab=NA,ylab=NA,cex.lab=.75,cex.axis=0.55,cex.names=0.55,legend.text=F,add=T,col=1,angle=unique(c(45,360-45,seq(45,360-45,length=nage))),density=rep(25,nspec))
+# Corrected for 4 species: 8 colors
+cols <- c(colorRampPalette(c("white", "red"))(100)[rep(50,nage)],
+          colorRampPalette(c("white", "green"))(100)[rep(50,nage)],
+          colorRampPalette(c("white", "yellow"))(100)[rep(50,nage)],
+          colorRampPalette(c("white", "blue"))(100)[rep(50,nage)])
+
+for(i in 1:num_obs){
+  barplot(t(as.matrix(pspecagemean[,,i])),names.arg=paste0(rep(toupper(spclass),each=nage),toupper(substr(names(ageclass),1,1))),xlab=NA,ylab=NA,cex.lab=.75,cex.axis=0.55,cex.names=0.55,legend.text=F,col = cols)
+  barplot(t(as.matrix(pspecagemean[,,i])),names.arg=paste0(rep(toupper(spclass),each=nage),toupper(substr(names(ageclass),1,1))),xlab=NA,ylab=NA,cex.lab=.75,cex.axis=0.55,cex.names=0.55,legend.text=F,add=T,col=1,angle=unique(c(45,360-45,seq(45,360-45,length=nage))),density=rep(25,nspec))
+}
 
 mtext("True species/age", side = 1, outer = T, line=2)
 mtext("Probability of observed species/age", side = 2, outer = T, line=2)
@@ -329,28 +345,52 @@ plot(0, 0, type = "n", bty = "n", xaxt = "n", yaxt = "n")
 legend("right",c(paste(tolower(names(spclass)),"seal"),names(ageclass)), xpd = TRUE, horiz = F, inset = c(0,0), bty = "n", angle=c(rep(45,nspec),unique(c(45,360-45,seq(45,360-45,length=nage)))),density=c(rep(-1,nspec),rep(40,nage)),x = "right", fill=c(cols[seq(nage,nage*nspec,nage)],rep(1,nage)),cex=.75)
 dev.off()
 
+pspecagemean_overall=apply(pspecage,c(1,2),mean)
+tquantiles=function(x){quantile(x,c(.025))}
+pspecageLCI_overall=apply(pspecage,c(1,2),tquantiles)
+tquantiles=function(x){quantile(x,c(.975))}
+pspecageUCI_overall=apply(pspecage,c(1,2),tquantiles)
+
+pspecagesummary_overall=matrix(0,nrow=nspec*nage*nspec*nage,ncol=3)
+pspecagesummary_overall[,1]=c(t(pspecagemean_overall))
+pspecagesummary_overall[,2]=c(t(pspecageLCI_overall))
+pspecagesummary_overall[,3]=c(t(pspecageUCI_overall))
+
+rownames(pspecagemean_overall) <- paste(rep(names(spclass),each=nage),names(ageclass))
+colnames(pspecagemean_overall) <- paste(rep(names(spclass),each=nage),names(ageclass)) # Fixed hard-coded 2-species limitation
+
+tiff(file="pspecagemean_obs.tiff",width=7.25,height=5,units="in",res=600,compression="lzw")
+par(mfrow=c(1, 1), mar=c(5, 5, 4, 8))
+barplot(t(as.matrix(pspecagemean_overall)),names.arg=paste0(rep(toupper(spclass),each=nage),toupper(substr(names(ageclass),1,1))),xlab=NA,ylab=NA,cex.lab=.75,cex.axis=0.55,cex.names=0.55,legend.text=F,col = cols)
+barplot(t(as.matrix(pspecagemean_overall)),names.arg=paste0(rep(toupper(spclass),each=nage),toupper(substr(names(ageclass),1,1))),xlab=NA,ylab=NA,cex.lab=.75,cex.axis=0.55,cex.names=0.55,legend.text=F,add=T,col=1,angle=unique(c(45,360-45,seq(45,360-45,length=nage))),density=rep(25,nspec))
+dev.off()
+
 spec_psi=matrix(0,nrow=length(seq(1,iter*nchains,thn)),ncol=nspec)
 for(s in 1:nspec){
   spec_psi[,s]=rowSums(psi[,(s-1)*nage+1:nage])
 }
 
-Pspec=matrix(0,nspec,nspec)
-varPspec=matrix(0,nspec,nspec)
-for(s in 1:nspec){
-  for(k in 1:nspec){
-    tmp=spec_psi[,s]*alpha[,paste0("alpha[",s,",",k,"]")]/apply(spec_psi*alpha[,paste0("alpha[",1:nspec,",",k,"]")],1,sum)
-    Pspec[s,k] = mean(tmp)
-    varPspec[s,k] = var(tmp)
+Pspec=array(0,dim=c(nspec,nspec,num_obs))
+varPspec=array(0,dim=c(nspec,nspec,num_obs))
+for(i in 1:num_obs){
+  for(s in 1:nspec){
+    for(k in 1:nspec){
+      tmp=spec_psi[,s]*alpha[,paste0("alpha[",i,",",s,",",k,"]")]/apply(spec_psi*alpha[,paste0("alpha[",i,",",1:nspec,",",k,"]")],1,sum)
+      Pspec[s,k,i] = mean(tmp)
+      varPspec[s,k,i] = var(tmp)
+    }
   }
 }
 
-Pspecfull=matrix(0,nspec,nspec*nscert)
-varPspecfull=matrix(0,nspec,nspec*nscert)
-for(s in 1:nspec){
-  for(k in 1:(nspec*nscert)){
-    tmp=spec_psi[,s]*p12[s,k,]/apply(spec_psi*t(p12[1:nspec,k,]),1,sum)
-    Pspecfull[s,k] = mean(tmp)
-    varPspecfull[s,k] = var(tmp)
+Pspecfull=array(0,dim=c(nspec,nspec*nscert,num_obs))
+varPspecfull=array(0,dim=c(nspec,nspec*nscert,num_obs))
+for(i in 1:num_obs){
+  for(s in 1:nspec){
+    for(k in 1:(nspec*nscert)){
+      tmp=spec_psi[,s]*p12[s,k,i,]/apply(spec_psi*t(p12[1:nspec,k,i,]),1,sum)
+      Pspecfull[s,k,i] = mean(tmp)
+      varPspecfull[s,k,i] = var(tmp)
+    }
   }
 }
 rownames(Pspecfull) <- rownames(p12)
@@ -361,42 +401,45 @@ for(s in 1:nage){
   age_psi[,s]=rowSums(psi[,seq(s,nage*nspec,nage)])
 }
 
-Page=matrix(0,nage,nage)
-varPage=matrix(0,nage,nage)
-
-for(s in 1:nage){
-  for(k in 1:nage){
-    tmp=age_psi[,s]*delta[,paste("delta[",s,",",k,"]",sep="")]/apply(age_psi*delta[,paste("delta[",1:nage,",",k,"]",sep="")],1,sum)
-    Page[s,k] = mean(tmp)
-    varPage[s,k] = var(tmp)
+Page=array(0,dim=c(nage,nage,num_obs))
+varPage=array(0,dim=c(nage,nage,num_obs))
+for(i in 1:num_obs){
+  for(s in 1:nage){
+    for(k in 1:nage){
+      tmp=age_psi[,s]*delta[,paste("delta[",i,",",s,",",k,"]",sep="")]/apply(age_psi*delta[,paste("delta[",i,",",1:nage,",",k,"]",sep="")],1,sum)
+      Page[s,k,i] = mean(tmp)
+      varPage[s,k,i] = var(tmp)
+    }
   }
 }
 
-P=matrix(0,nage*nspec,nage*nspec)
-varP=matrix(0,nage*nspec,nage*nspec)
-
-for(l in 1:nspec){
-  tempa=alpha[,rep(paste0("alpha[",1:nspec,",",l,"]"),each=nage)]
-  for(k in 1:nage){
-    tempb=delta[,rep(paste0("delta[",1:nage,",",k,"]"),nspec)]
-    for(s in 1:nspec){
-      for(j in 1:nage){
-        tmp=psi[,(s-1)*nage+j]*tempa[,(s-1)*nage+j]*tempb[,j]/apply(psi*tempa*tempb,1,sum)
-        P[(s-1)*nage+j,(l-1)*nage+k] = mean(tmp)
-        varP[(s-1)*nage+j,(l-1)*nage+k] = var(tmp)
+P=array(0,dim=c(nage*nspec,nage*nspec,num_obs))
+varP=array(0,dim=c(nage*nspec,nage*nspec,num_obs))
+for(i in 1:num_obs){
+  for(l in 1:nspec){
+    tempa=alpha[,rep(paste0("alpha[",i,",",1:nspec,",",l,"]"),each=nage)]
+    for(k in 1:nage){
+      tempb=delta[,rep(paste0("delta[",i,",",1:nage,",",k,"]"),nspec)]
+      for(s in 1:nspec){
+        for(j in 1:nage){
+          tmp=psi[,(s-1)*nage+j]*tempa[,(s-1)*nage+j]*tempb[,j]/apply(psi*tempa*tempb,1,sum)
+          P[(s-1)*nage+j,(l-1)*nage+k,i] = mean(tmp)
+          varP[(s-1)*nage+j,(l-1)*nage+k,i] = var(tmp)
+        }
       }
     }
   }
 }
 
-fullP=matrix(0,nspec*nage,spcats*nspec)
-fullvarP=matrix(0,nspec*nage,spcats*nspec)
-
-for(s in 1:(nspec*nage)){
-  for(k in 1:(spcats*nspec)){
-    tmp=psi[,s]*p[s,k,]/apply(psi*t(p[,k,]),1,sum)
-    fullP[s,k] = mean(tmp)
-    fullvarP[s,k] = var(tmp)
+fullP=array(0,dim=c(nspec*nage,spcats*nspec,num_obs))
+fullvarP=array(0,dim=c(nspec*nage,spcats*nspec,num_obs))
+for(i in 1:num_obs){
+  for(s in 1:(nspec*nage)){
+    for(k in 1:(spcats*nspec)){
+      tmp=psi[,s]*p[s,k,i,]/apply(psi*t(p[,k,i,]),1,sum)
+      fullP[s,k,i] = mean(tmp)
+      fullvarP[s,k,i] = var(tmp)
+    }
   }
 }
 

@@ -1,0 +1,86 @@
+model  {
+
+  for(r in 1:R)	{
+    z[r] ~ dcat(psi[])
+  }
+
+  for(k in 1:n_obs_total) {
+    
+    # y_long[k] belongs to seal_idx[k] and obs_idx[k]
+    y_long[k] ~ dcat(p[obs_idx[k],z[seal_idx[k]], ])
+    
+  }
+
+  psi[1:(nage*nspec)] ~ ddirch(dirchprior[])  #dirchprior={1,1,1,1,1,1,1,1}
+  
+  for(i in 1:n){
+
+    #true spotted
+    beta[i,1,1,1:3] ~ ddirch(dirchprior[1:nscert])   
+    beta[i,1,2,1:2] ~ ddirch(dirchprior[1:(nscert-1)])   
+    beta[i,1,2,3] <- 0
+    beta[i,1,3,1:2] ~ ddirch(dirchprior[1:(nscert-1)])   
+    beta[i,1,3,3] <- 0
+    beta[i,1,4,1:2] ~ ddirch(dirchprior[1:(nscert-1)])   
+    beta[i,1,4,3] <- 0
+  
+    #true ribbon
+    beta[i,2,1,1:2] ~ ddirch(dirchprior[1:(nscert-1)])   
+    beta[i,2,1,3] <- 0
+    beta[i,2,2,1:3] ~ ddirch(dirchprior[1:nscert])   
+    beta[i,2,3,1:2] ~ ddirch(dirchprior[1:(nscert-1)])   
+    beta[i,2,3,3] <- 0
+    beta[i,2,4,1:2] ~ ddirch(dirchprior[1:(nscert-1)])   
+    beta[i,2,4,3] <- 0
+  
+    #true bearded
+    beta[i,3,1,1:2] ~ ddirch(dirchprior[1:(nscert-1)])   
+    beta[i,3,1,3] <- 0
+    beta[i,3,2,1:2] ~ ddirch(dirchprior[1:(nscert-1)])   
+    beta[i,3,2,3] <- 0
+    beta[i,3,3,1:3] ~ ddirch(dirchprior[1:nscert])   
+    beta[i,3,4,1:2] ~ ddirch(dirchprior[1:(nscert-1)])   
+    beta[i,3,4,3] <- 0
+  
+    #true ringed
+    beta[i,4,1,1:2] ~ ddirch(dirchprior[1:(nscert-1)])   
+    beta[i,4,1,3] <- 0
+    beta[i,4,2,1:2] ~ ddirch(dirchprior[1:(nscert-1)])   
+    beta[i,4,2,3] <- 0
+    beta[i,4,3,1:2] ~ ddirch(dirchprior[1:(nscert-1)])   
+    beta[i,4,3,3] <- 0
+    beta[i,4,4,1:3] ~ ddirch(dirchprior[1:nscert])   
+  
+    #true pup
+    gamma[i,1,1,1:nacert] ~ ddirch(dirchprior[1:nacert])   
+    gamma[i,1,2,1:(nacert-1)] ~ ddirch(dirchprior[1:(nacert-1)])   
+    gamma[i,1,2,nacert] <- 0
+  
+    #true nonpup
+    gamma[i,2,1,1:(nacert-1)] ~ ddirch(dirchprior[1:(nacert-1)])   
+    gamma[i,2,1,nacert] <- 0
+    gamma[i,2,2,1:nacert] ~ ddirch(dirchprior[1:nacert])    
+    
+    for(j in 1:nage){ # true age class
+      delta[i,j,1:nage] ~ ddirch(dirchprior[1:nage])   
+    }
+            
+    for(l in 1:nspec)  { # true species
+  
+      alpha[i,l,1:nspec] ~ ddirch(dirchprior[1:nspec])   
+  
+      for(j in 1:nage){ # true age class
+  
+        for(s in 1:nspec){ # observed species
+          for(s_star in 1:nscert){ # species confidence
+            for(a in 1:nage){  # observed age
+              for(a_star in 1:nacert){  # age confidence
+                p[i,(l-1)*nage+j,nscert*nage*nacert*(s-1)+nage*nacert*(s_star-1)+nacert*(a-1)+a_star] <-  alpha[i,l,s]*beta[i,l,s,s_star]*delta[i,j,a]*gamma[i,j,a,a_star]
+              }
+            }
+          }
+        }
+      }    
+    }
+  }
+}
